@@ -1,0 +1,20 @@
+- generic [ref=e2]:
+  - navigation [ref=e3]:
+    - generic [ref=e4]: ROASTMYGITHUB
+    - button "Toggle theme" [ref=e5]: ◐ DARK
+  - main [ref=e6]:
+    - paragraph [ref=e8]: VOL. I — ISSUE № 01
+    - generic [ref=e9]:
+      - heading "ROAST" [level=1] [ref=e10]
+      - paragraph [ref=e11]: my GitHub
+    - paragraph [ref=e13]: A brutally honest literary takedown of your coding habits, dead repos, and the gap between who you say you are and what your commits reveal. Written by AI. Peer-reviewed by no one.
+    - generic [ref=e14]:
+      - generic [ref=e15]:
+        - generic [ref=e16]: "@"
+        - textbox "username" [ref=e17]
+        - generic [ref=e18]: "|"
+      - button "ROAST ME" [ref=e20] [cursor=pointer]
+  - contentinfo [ref=e21]:
+    - paragraph [ref=e22]: © ROASTMYGITHUB — NO DATA STORED EXCEPT CACHE
+    - link "X / TWITTER" [ref=e23] [cursor=pointer]:
+      - /url: https://x.com
