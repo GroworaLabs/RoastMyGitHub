@@ -7,7 +7,7 @@ export default function ThemeToggle() {
 
   useEffect(() => {
     const stored = localStorage.getItem('theme')
-    if (stored === 'dark') setDark(true)
+    if (stored !== 'light') setDark(true)
   }, [])
 
   function toggle() {
