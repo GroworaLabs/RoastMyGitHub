@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
   }
 
   // 2. Username cache — no Claude call needed
-  const cached = getCachedRoast(username)
+  const cached = await getCachedRoast(username)
   if (cached) {
     return new Response(makeSSEStream(cached), {
       headers: {
@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
     },
     flush() {
       if (fullText.length > 100) {
-        setCachedRoast(username, fullText)
+        setCachedRoast(username, fullText).catch(() => {})
         addRecentRoast(username, fullText.slice(0, 120))
       }
     },
