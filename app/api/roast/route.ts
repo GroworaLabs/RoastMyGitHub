@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { fetchGitHubDossier } from '@/lib/github'
 import { streamRoast } from '@/lib/claude'
 import { checkRateLimit } from '@/lib/ratelimit'
+import { checkGlobalLimit } from '@/lib/globalLimit'
+import { getCachedRoast, setCachedRoast } from '@/lib/roastCache'
 import { addRecentRoast } from '@/lib/recentRoasts'
 
 export const runtime = 'nodejs'
@@ -15,20 +17,20 @@ function getIp(req: NextRequest): string {
   )
 }
 
+function makeSSEStream(text: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder()
+  // Stream cached roast back as a single SSE event so client handles it identically
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`))
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+      controller.close()
+    },
+  })
+}
+
 export async function POST(req: NextRequest) {
-  const ip = getIp(req)
-  const { allowed, resetIn } = checkRateLimit(ip)
-
-  if (!allowed) {
-    const minutes = Math.ceil(resetIn / 60000)
-    return NextResponse.json(
-      {
-        error: `Even our critics need a moment between issues. Try again in ${minutes} minute${minutes !== 1 ? 's' : ''}.`,
-      },
-      { status: 429 }
-    )
-  }
-
+  // 1. Parse + validate username
   let username: string
   try {
     const body = await req.json()
@@ -40,6 +42,44 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 })
   }
 
+  // 2. Username cache — no Claude call needed
+  const cached = getCachedRoast(username)
+  if (cached) {
+    return new Response(makeSSEStream(cached), {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Cache': 'HIT',
+      },
+    })
+  }
+
+  // 3. Per-IP rate limit
+  const ip = getIp(req)
+  const { allowed: ipAllowed, resetIn } = checkRateLimit(ip)
+  if (!ipAllowed) {
+    const minutes = Math.ceil(resetIn / 60000)
+    return NextResponse.json(
+      {
+        error: `Even our critics need a moment between issues. Try again in ${minutes} minute${minutes !== 1 ? 's' : ''}.`,
+      },
+      { status: 429 }
+    )
+  }
+
+  // 4. Global daily cap
+  const { allowed: globalAllowed } = checkGlobalLimit()
+  if (!globalAllowed) {
+    return NextResponse.json(
+      {
+        error: 'The editorial desk has reached its daily quota. We resume tomorrow.',
+      },
+      { status: 429 }
+    )
+  }
+
+  // 5. GitHub fetch
   let dossier
   try {
     dossier = await fetchGitHubDossier(username)
@@ -47,10 +87,7 @@ export async function POST(req: NextRequest) {
     const status = (err as { status?: number }).status
     if (status === 404) {
       return NextResponse.json(
-        {
-          error:
-            'This developer does not exist. Or has impeccable opsec.',
-        },
+        { error: 'This developer does not exist. Or has impeccable opsec.' },
         { status: 404 }
       )
     }
@@ -58,44 +95,39 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to fetch GitHub profile.' }, { status: 502 })
   }
 
-  // Stream the roast
+  // 6. Stream Claude — intercept to cache + record recent
   const roastStream = await streamRoast(dossier)
-
-  // Intercept the stream to capture the first line for recent roasts
-  let firstLine = ''
-  let firstLineCaptured = false
+  const encoder = new TextEncoder()
   const decoder = new TextDecoder()
+  let fullText = ''
 
   const intercepted = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
-      if (!firstLineCaptured) {
-        const text = decoder.decode(chunk, { stream: true })
-        firstLine += text
-        const match = firstLine.match(/data: ({.*?})\n/)
-        if (match) {
+      const raw = decoder.decode(chunk, { stream: true })
+      for (const line of raw.split('\n')) {
+        if (line.startsWith('data: ') && line.slice(6) !== '[DONE]') {
           try {
-            const parsed = JSON.parse(match[1])
-            if (parsed.text && parsed.text.length > 20) {
-              addRecentRoast(username, parsed.text)
-              firstLineCaptured = true
-            }
-          } catch {
-            // ignore
-          }
+            const { text } = JSON.parse(line.slice(6))
+            fullText += text
+          } catch { /* ignore */ }
         }
       }
       controller.enqueue(chunk)
     },
+    flush() {
+      if (fullText.length > 100) {
+        setCachedRoast(username, fullText)
+        addRecentRoast(username, fullText.slice(0, 120))
+      }
+    },
   })
 
-  const responseStream = roastStream.pipeThrough(intercepted)
-
-  return new Response(responseStream, {
+  return new Response(roastStream.pipeThrough(intercepted), {
     headers: {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
-      'X-Username': username,
+      'X-Cache': 'MISS',
     },
   })
 }

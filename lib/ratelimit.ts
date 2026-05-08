@@ -11,7 +11,7 @@ const cache = new LRUCache<string, RateLimitEntry>({
   ttl: 60 * 60 * 1000, // 1 hour
 })
 
-const LIMIT = 3
+const LIMIT = 2
 const WINDOW_MS = 60 * 60 * 1000 // 1 hour
 
 export function checkRateLimit(ip: string): { allowed: boolean; remaining: number; resetIn: number } {
